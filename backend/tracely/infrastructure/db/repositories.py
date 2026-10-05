@@ -8,6 +8,7 @@ query-building in route handlers. Functions are grouped by aggregate; they retur
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -642,9 +643,14 @@ def case_delete(s: Session, project_id: str, case_id: str) -> bool:
     from tracely.domain.regression.artifact import case_blob_prefix
     from tracely.infrastructure.blob import s3 as blobstore
 
-    blobstore._delete_prefix(case_blob_prefix(settings.s3_event_prefix, project, case_id))
-    if fixture_key:
-        blobstore._delete_prefix(fixture_key)
+    # `_delete_prefix` raises (so the purge task retries); here the rows are already gone, so a
+    # storage hiccup must not turn a done delete into a 500. `purge_orphans` can't reach these.
+    try:
+        blobstore._delete_prefix(case_blob_prefix(settings.s3_event_prefix, project, case_id))
+        if fixture_key:
+            blobstore._delete_prefix(fixture_key)
+    except Exception:
+        logging.getLogger(__name__).warning("case %s: blob cleanup failed", case_id, exc_info=True)
     return True
 
 
